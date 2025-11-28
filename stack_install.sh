@@ -134,42 +134,32 @@ EOL
     # Сохраняем пароль - проверяем все возможные случаи
     mkdir -p "$CREDENTIALS_DIR"
     
-    # Проверяем, нужно ли сохранять пароль
-    NEED_TO_SAVE=0
-    
+    # Если пароль был сброшен, файл уже обновлен функцией reset_mariadb_password
     if [ "$PASSWORD_WAS_RESET" -eq 1 ]; then
-        # Пароль был сброшен, файл уже обновлен функцией reset_mariadb_password
         log_message "info" "Пароль root MariaDB был сброшен и сохранен"
-        NEED_TO_SAVE=0
-    elif [ ! -f "$MARIADB_CREDENTIALS" ]; then
-        # Файл не существует
-        NEED_TO_SAVE=1
-    elif [ ! -s "$MARIADB_CREDENTIALS" ]; then
-        # Файл пустой
-        NEED_TO_SAVE=1
-    elif ! grep -q "^MariaDB Root Password:" "$MARIADB_CREDENTIALS" 2>/dev/null; then
-        # Файл существует, но пароля в нем нет
-        NEED_TO_SAVE=1
-    else
-        # Файл существует и содержит пароль - проверяем, работает ли он
-        local saved_pass=$(get_db_root_pass 2>/dev/null || echo "")
-        if [ -z "$saved_pass" ] || [ "$saved_pass" != "$DB_ROOT_PASS" ]; then
-            # Пароль в файле не совпадает с текущим рабочим паролем
-            # Но если текущий пароль работает, не меняем файл
-            export MYSQL_PWD="$DB_ROOT_PASS"
-            if mysql -u root -e "SELECT 1;" >/dev/null 2>&1; then
-                # Текущий пароль работает - обновляем файл
-                NEED_TO_SAVE=1
-            fi
-        fi
-    fi
-    
-    if [ "$NEED_TO_SAVE" -eq 1 ]; then
+    # Проверяем, нужно ли сохранять пароль
+    elif [ ! -f "$MARIADB_CREDENTIALS" ] || [ ! -s "$MARIADB_CREDENTIALS" ]; then
+        # Файл не существует или пустой - сохраняем пароль
         echo "MariaDB Root Password: $DB_ROOT_PASS" > "$MARIADB_CREDENTIALS"
         chmod 600 "$MARIADB_CREDENTIALS"
         log_message "success" "Пароль root MariaDB сохранен в $MARIADB_CREDENTIALS"
+    elif ! grep -q "^MariaDB Root Password:" "$MARIADB_CREDENTIALS" 2>/dev/null; then
+        # Файл существует, но пароля в нем нет - сохраняем пароль
+        echo "MariaDB Root Password: $DB_ROOT_PASS" > "$MARIADB_CREDENTIALS"
+        chmod 600 "$MARIADB_CREDENTIALS"
+        log_message "success" "Пароль root MariaDB записан в файл $MARIADB_CREDENTIALS"
     else
-        log_message "info" "Пароль root MariaDB уже сохранен и работает, файл не изменен"
+        # Файл существует и содержит пароль - проверяем, совпадает ли он с текущим
+        local saved_pass=$(get_db_root_pass 2>/dev/null || echo "")
+        if [ -z "$saved_pass" ] || [ "$saved_pass" != "$DB_ROOT_PASS" ]; then
+            # Пароль в файле не совпадает с текущим рабочим паролем - обновляем файл
+            echo "MariaDB Root Password: $DB_ROOT_PASS" > "$MARIADB_CREDENTIALS"
+            chmod 600 "$MARIADB_CREDENTIALS"
+            log_message "success" "Пароль root MariaDB обновлен в $MARIADB_CREDENTIALS"
+        else
+            # Файл содержит правильный пароль - не трогаем его
+            log_message "info" "Пароль root MariaDB уже сохранен и работает, файл не изменен"
+        fi
     fi
     for version in "${PHP_VERSIONS[@]}"; do
         apt install -y php${version} php${version}-fpm php${version}-mysql php${version}-mbstring php${version}-xml php${version}-curl php${version}-zip

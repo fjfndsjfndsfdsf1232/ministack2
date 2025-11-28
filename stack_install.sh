@@ -65,24 +65,35 @@ EOL
     
     # Теперь проверяем/устанавливаем пароль
     PASSWORD_WAS_RESET=0
-    if [ -f "$MARIADB_CREDENTIALS" ]; then
+    if [ -f "$MARIADB_CREDENTIALS" ] && [ -s "$MARIADB_CREDENTIALS" ]; then
         log_message "info" "Файл с паролем MariaDB уже существует. Проверяем существующий пароль..."
-        DB_ROOT_PASS=$(get_db_root_pass)
-        export MYSQL_PWD="$DB_ROOT_PASS"
-        # Проверяем, работает ли существующий пароль
-        if mysql -u root -e "SELECT 1;" >/dev/null 2>&1; then
-            log_message "success" "Существующий пароль root MariaDB работает. Используем его."
-            # Пароль работает, не будем его менять
-        else
-            log_message "warning" "Существующий пароль не работает. Сбрасываем пароль..."
-            # Сбрасываем пароль (функция сама сгенерирует новый и сохранит в файл)
-            if ! reset_mariadb_password; then
-                log_message "error" "Не удалось сбросить пароль root для MariaDB"
-                exit 1
+        # Проверяем, есть ли в файле пароль
+        if grep -q "^MariaDB Root Password:" "$MARIADB_CREDENTIALS"; then
+            DB_ROOT_PASS=$(grep "^MariaDB Root Password:" "$MARIADB_CREDENTIALS" | sed 's/^MariaDB Root Password: //' | sed 's/[[:space:]]*$//' | tr -d '\n\r')
+        fi
+        
+        # Если пароль найден и не пустой, пробуем его использовать
+        if [ -n "$DB_ROOT_PASS" ]; then
+            export MYSQL_PWD="$DB_ROOT_PASS"
+            # Проверяем, работает ли существующий пароль
+            if mysql -u root -e "SELECT 1;" >/dev/null 2>&1; then
+                log_message "success" "Существующий пароль root MariaDB работает. Используем его."
+                # Пароль работает, не будем его менять
+            else
+                log_message "warning" "Существующий пароль не работает. Сбрасываем пароль..."
+                # Сбрасываем пароль (функция сама сгенерирует новый и сохранит в файл)
+                if ! reset_mariadb_password; then
+                    log_message "error" "Не удалось сбросить пароль root для MariaDB"
+                    exit 1
+                fi
+                # После сброса получаем новый пароль из файла
+                DB_ROOT_PASS=$(get_db_root_pass)
+                PASSWORD_WAS_RESET=1
             fi
-            # После сброса получаем новый пароль из файла
-            DB_ROOT_PASS=$(get_db_root_pass)
-            PASSWORD_WAS_RESET=1
+        else
+            # Файл существует, но пароль пустой или отсутствует
+            log_message "warning" "Файл с паролем существует, но пароль пустой. Генерируем новый пароль..."
+            DB_ROOT_PASS=$(openssl rand -base64 12)
         fi
     else
         # Файла с паролем нет, генерируем новый

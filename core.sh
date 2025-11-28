@@ -164,15 +164,26 @@ get_db_root_pass() {
 
 # Проверка и обновление пароля root MySQL, если он не совпадает
 verify_and_fix_db_password() {
-    local stored_pass=$(get_db_root_pass)
-    export MYSQL_PWD="$stored_pass"
-    
-    # Проверяем, работает ли сохраненный пароль
-    if mysql -u root -e "SELECT 1;" >/dev/null 2>&1; then
-        return 0
+    # Сначала проверяем, есть ли файл и содержит ли он пароль
+    local stored_pass=""
+    if [ -f "$MARIADB_CREDENTIALS" ] && [ -s "$MARIADB_CREDENTIALS" ]; then
+        # Проверяем, есть ли в файле строка с паролем
+        if grep -q "^MariaDB Root Password:" "$MARIADB_CREDENTIALS"; then
+            stored_pass=$(grep "^MariaDB Root Password:" "$MARIADB_CREDENTIALS" | sed 's/^MariaDB Root Password: //' | sed 's/[[:space:]]*$//' | tr -d '\n\r')
+        fi
     fi
     
-    log_message "warning" "Сохраненный пароль root не работает. Попытка подключения без пароля..."
+    # Если пароль найден, пробуем его использовать
+    if [ -n "$stored_pass" ]; then
+        export MYSQL_PWD="$stored_pass"
+        # Проверяем, работает ли сохраненный пароль
+        if mysql -u root -e "SELECT 1;" >/dev/null 2>&1; then
+            return 0
+        fi
+        log_message "warning" "Сохраненный пароль root не работает. Попытка подключения без пароля..."
+    else
+        log_message "info" "Пароль root MariaDB не найден в файле. Пробуем подключиться без пароля..."
+    fi
     
     # Пробуем подключиться без пароля (если MariaDB только что установлена)
     unset MYSQL_PWD
@@ -184,6 +195,7 @@ verify_and_fix_db_password() {
             export MYSQL_PWD="$new_pass"
             if mysql -u root -e "SELECT 1;" >/dev/null 2>&1; then
                 # Сохраняем новый пароль
+                mkdir -p "$CREDENTIALS_DIR"
                 echo "MariaDB Root Password: $new_pass" > "$MARIADB_CREDENTIALS"
                 chmod 600 "$MARIADB_CREDENTIALS"
                 log_message "success" "Пароль root обновлен и сохранен"

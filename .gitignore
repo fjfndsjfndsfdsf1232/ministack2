@@ -1,0 +1,14 @@
+*.tar.gz
+.DS_Store
+*.zip
+*.tar.gz
+*.tar.bz2
+*.tar.xz
+*.tar.lzma
+*.tar.lz
+*.tar.Z
+*.tar.gz.part
+*.tar.gz.part.1
+*.tar.gz.part.2
+*.tar.gz.part.3
+*.tar.gz.part.4

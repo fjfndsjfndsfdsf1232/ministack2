@@ -1,0 +1,12 @@
+# Игнорируем ненужные файлы при сборке Docker образа
+.git
+.gitignore
+*.md
+*.zip
+Archive.zip
+test_*.sh
+run_all_tests.sh
+Dockerfile.test
+.dockerignore
+*.log
+

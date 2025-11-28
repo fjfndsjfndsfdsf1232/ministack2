@@ -12,3 +12,7 @@
 *.tar.gz.part.2
 *.tar.gz.part.3
 *.tar.gz.part.4
+test_*.sh
+run_all_tests.sh
+*.md
+Dockerfile.test

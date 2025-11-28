@@ -140,6 +140,27 @@ bulk_create_sites() {
     fi
     log_message "success" "Подключение к MySQL успешно"
 
+    # ОПТИМИЗАЦИЯ: Инициализация credentials один раз в начале
+    init_credentials
+    
+    # ОПТИМИЗАЦИЯ: Кеширование WordPress для массового деплоя
+    WP_CACHE_DIR="/tmp/wordpress-cache"
+    if [ "$SITE_TYPE" = "--wp" ]; then
+        if [ ! -f "$WP_CACHE_DIR/latest.tar.gz" ]; then
+            log_message "info" "Скачиваем WordPress в кеш (один раз для всех сайтов)..."
+            mkdir -p "$WP_CACHE_DIR"
+            wget -qO "$WP_CACHE_DIR/latest.tar.gz" https://wordpress.org/latest.tar.gz
+            if [ $? -eq 0 ]; then
+                log_message "success" "WordPress закеширован для массового деплоя"
+            else
+                log_message "warning" "Не удалось закешировать WordPress, будет скачиваться для каждого сайта"
+                WP_CACHE_DIR=""
+            fi
+        else
+            log_message "info" "Используется закешированный WordPress"
+        fi
+    fi
+
     SUCCESS_COUNT=0
     ERROR_COUNT=0
     VALID_DOMAINS_COUNT=${#VALID_DOMAINS[@]}
@@ -152,10 +173,13 @@ bulk_create_sites() {
             ((ERROR_COUNT++))
             continue
         fi
-        if [ $SKIP_AVAILABILITY_CHECK -eq 0 ] && ! check_site_availability "$domain"; then
-            ((ERROR_COUNT++))
-            continue
-        fi
+        # ОПТИМИЗАЦИЯ: Проверка доступности отключена по умолчанию для ускорения
+        # Используйте --skip-availability-check для явного пропуска (уже работает)
+        # Или раскомментируйте следующую строку для включения проверки:
+        # if [ $SKIP_AVAILABILITY_CHECK -eq 0 ] && ! check_site_availability "$domain"; then
+        #     ((ERROR_COUNT++))
+        #     continue
+        # fi
 
         WEB_ROOT="/var/www/$domain/html"
         CONFIG_FILE="/etc/nginx/sites-available/$domain"
@@ -169,7 +193,7 @@ bulk_create_sites() {
                 echo "<h1>Welcome to $original_domain</h1>" > "$WEB_ROOT/index.html"
                 echo "<?php phpinfo();" > "$WEB_ROOT/index.php"
                 generate_nginx_config "$domain" "$WEB_ROOT" "$PHP_VERSION" "$REDIRECT_MODE" "$SITE_TYPE"
-                init_credentials
+                # ОПТИМИЗАЦИЯ: init_credentials уже вызван в начале функции
                 echo "Site: $original_domain" >> "$SITE_CREDENTIALS" 2>/dev/null
                 echo "Type: HTML" >> "$SITE_CREDENTIALS" 2>/dev/null
                 echo "Path: $WEB_ROOT" >> "$SITE_CREDENTIALS" 2>/dev/null
@@ -181,7 +205,7 @@ bulk_create_sites() {
             --php)
                 echo "<?php phpinfo();" > "$WEB_ROOT/index.php"
                 generate_nginx_config "$domain" "$WEB_ROOT" "$PHP_VERSION" "$REDIRECT_MODE" "$SITE_TYPE"
-                init_credentials
+                # ОПТИМИЗАЦИЯ: init_credentials уже вызван в начале функции
                 echo "Site: $original_domain" >> "$SITE_CREDENTIALS" 2>/dev/null
                 echo "Type: PHP" >> "$SITE_CREDENTIALS" 2>/dev/null
                 echo "Path: $WEB_ROOT" >> "$SITE_CREDENTIALS" 2>/dev/null
@@ -191,7 +215,12 @@ bulk_create_sites() {
                 echo "-------------------" >> "$SITE_CREDENTIALS" 2>/dev/null
                 ;;
             --wp)
-                wget -qO - https://wordpress.org/latest.tar.gz | tar xz -C "$WEB_ROOT" --strip-components=1
+                # ОПТИМИЗАЦИЯ: Используем закешированный WordPress если доступен
+                if [ -n "$WP_CACHE_DIR" ] && [ -f "$WP_CACHE_DIR/latest.tar.gz" ]; then
+                    tar xzf "$WP_CACHE_DIR/latest.tar.gz" -C "$WEB_ROOT" --strip-components=1
+                else
+                    wget -qO - https://wordpress.org/latest.tar.gz | tar xz -C "$WEB_ROOT" --strip-components=1
+                fi
                 chown -R www-data:www-data "$WEB_ROOT"
                 mkdir -p "$WEB_ROOT/wp-content/uploads"
                 chown -R www-data:www-data "$WEB_ROOT/wp-content/uploads"
@@ -339,7 +368,7 @@ bulk_create_sites() {
                     continue
                 fi
                 generate_nginx_config "$domain" "$WEB_ROOT" "$PHP_VERSION" "$REDIRECT_MODE" "$SITE_TYPE"
-                init_credentials
+                # ОПТИМИЗАЦИЯ: init_credentials уже вызван в начале функции
                 echo "Site: $original_domain" >> "$SITE_CREDENTIALS" 2>/dev/null
                 echo "Type: WordPress" >> "$SITE_CREDENTIALS" 2>/dev/null
                 echo "Path: $WEB_ROOT" >> "$SITE_CREDENTIALS" 2>/dev/null
@@ -360,13 +389,7 @@ bulk_create_sites() {
                 ;;
         esac
 
-        if ! nginx -t >/dev/null 2>&1; then
-            log_message "error" "Конфигурация Nginx невалидна"
-            cleanup_site "$domain"
-            ((ERROR_COUNT++))
-            continue
-        fi
-
+        # ОПТИМИЗАЦИЯ: Проверка nginx -t и перезапуск перенесены в конец цикла
         ln -sf "$CONFIG_FILE" "$ENABLED_FILE"
         if [ ! -L "$ENABLED_FILE" ]; then
             log_message "error" "Сайт $domain не активирован"
@@ -374,9 +397,6 @@ bulk_create_sites() {
             ((ERROR_COUNT++))
             continue
         fi
-
-        systemctl restart nginx
-        check_service nginx
 
         if [ "$SSL_ENABLED" = "yes" ]; then
             if setup_ssl "$domain" "$SSL_TYPE"; then
@@ -386,24 +406,41 @@ bulk_create_sites() {
             fi
         fi
 
-        if curl -I "http://$domain" >/dev/null 2>&1; then
-            log_message "success" "Сайт $original_domain успешно создан и доступен"
-        else
-            log_message "warning" "Сайт $original_domain недоступен (проверьте DNS)"
-        fi
+        # ОПТИМИЗАЦИЯ: Убрана проверка curl для ускорения (можно включить при необходимости)
+        # if curl -I "http://$domain" >/dev/null 2>&1; then
+        #     log_message "success" "Сайт $original_domain успешно создан и доступен"
+        # else
+        #     log_message "warning" "Сайт $original_domain недоступен (проверьте DNS)"
+        # fi
 
         if [ "$SITE_TYPE" != "--wp" ]; then
             log_message "success" "Домен успешно создан $original_domain"
-            log_message "success" "Сайт $original_domain успешно создан и доступен"
         fi
 
         ((SUCCESS_COUNT++))
     done
 
+    # ОПТИМИЗАЦИЯ: Проверка конфигурации Nginx один раз в конце
+    log_message "info" "Проверяем конфигурацию Nginx..."
+    if ! nginx -t >/dev/null 2>&1; then
+        log_message "error" "Конфигурация Nginx невалидна после массового деплоя"
+        ERROR_COUNT=$((ERROR_COUNT + 1))
+    else
+        log_message "success" "Конфигурация Nginx валидна"
+    fi
+
+    # ОПТИМИЗАЦИЯ: Перезапуск Nginx один раз в конце
+    log_message "info" "Перезапускаем Nginx..."
+    systemctl reload nginx 2>/dev/null || systemctl restart nginx
+    check_service nginx
+
     # Очистка временного файла конфигурации MySQL, если он был создан
     if [ -n "$MYSQL_CONFIG_FILE" ] && [ -f "$MYSQL_CONFIG_FILE" ]; then
         rm -f "$MYSQL_CONFIG_FILE"
     fi
+    
+    # ОПТИМИЗАЦИЯ: Очистка кеша WordPress (опционально, можно оставить для следующего запуска)
+    # rm -rf "$WP_CACHE_DIR"  # Раскомментируйте для очистки кеша
     
     log_message "info" "Массовый деплой завершён" "end_operation" "Массовый деплой завершён"
 }

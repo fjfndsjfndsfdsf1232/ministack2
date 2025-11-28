@@ -45,6 +45,19 @@ bulk_delete_sites() {
     SUCCESS_COUNT=0
     ERROR_COUNT=0
     VALID_DOMAINS_COUNT=${#VALID_DOMAINS[@]}
+    
+    # Получаем пароль один раз перед циклом
+    DB_ROOT_PASS=$(get_db_root_pass)
+    export MYSQL_PWD="$DB_ROOT_PASS"
+    
+    # Создаем конфигурационный файл MySQL для безопасной передачи пароля
+    MYSQL_CONFIG=$(create_mysql_config "$DB_ROOT_PASS")
+    if [ -n "$MYSQL_CONFIG" ] && [ -f "$MYSQL_CONFIG" ]; then
+        MYSQL_CMD="mysql --defaults-file=$MYSQL_CONFIG -u root"
+    else
+        MYSQL_CMD="mysql -u root"
+    fi
+    
     for i in "${!VALID_DOMAINS[@]}"; do
         domain="${VALID_DOMAINS[$i]}"
         original_domain="${ORIGINAL_DOMAINS[$i]}"
@@ -60,7 +73,6 @@ bulk_delete_sites() {
         ENABLED_FILE="/etc/nginx/sites-enabled/$domain"
         DB_NAME=$(domain_to_db_name "$domain")
         CERT_PATH="/etc/letsencrypt/live/$domain"
-        DB_ROOT_PASS=$(get_db_root_pass)
         if [ -d "$CERT_PATH" ]; then
             certbot delete --cert-name "$domain" --non-interactive
             if [ ! -d "$CERT_PATH" ]; then
@@ -74,8 +86,8 @@ bulk_delete_sites() {
         [ -f "$ENABLED_FILE" ] && rm "$ENABLED_FILE"
         [ -f "$CONFIG_FILE" ] && rm "$CONFIG_FILE"
         [ -d "$WEB_ROOT" ] && rm -rf "$WEB_ROOT"
-        mysql -u root -p"$DB_ROOT_PASS" -e "DROP DATABASE IF EXISTS $DB_NAME;" 2>/dev/null
-        mysql -u root -p"$DB_ROOT_PASS" -e "DROP USER IF EXISTS 'wp_$DB_NAME'@'localhost';" 2>/dev/null
+        $MYSQL_CMD -e "DROP DATABASE IF EXISTS $DB_NAME;" 2>/dev/null
+        $MYSQL_CMD -e "DROP USER IF EXISTS 'wp_$DB_NAME'@'localhost';" 2>/dev/null
         if grep -q "Site: $original_domain" "$SITE_CREDENTIALS"; then
             sed -i "/Site: $original_domain/,/-------------------/d" "$SITE_CREDENTIALS" 2>/dev/null
         fi

@@ -21,7 +21,7 @@ if [ "$1" = "--update" ]; then
         # Если скрипт обновления еще не установлен, скачиваем его временно
         REPO_DIR="/tmp/MiniStack-CLI-update-$$"
         if command -v git >/dev/null 2>&1; then
-            git clone https://gitlab504.xyz/root/ministack.git "$REPO_DIR" >/dev/null 2>&1
+            git clone https://github.com/fjfndsjfndsfdsf1232/ministack2.git "$REPO_DIR" >/dev/null 2>&1
             if [ -f "$REPO_DIR/update_minstack.sh" ]; then
                 bash "$REPO_DIR/update_minstack.sh"
                 rm -rf "$REPO_DIR"
@@ -50,7 +50,7 @@ if [ "$1" = "--uninstall" ]; then
         # Если скрипт удаления не найден, скачиваем его временно
         REPO_DIR="/tmp/MiniStack-CLI-uninstall-$$"
         if command -v git >/dev/null 2>&1; then
-            git clone https://gitlab504.xyz/root/ministack.git "$REPO_DIR" >/dev/null 2>&1
+            git clone https://github.com/fjfndsjfndsfdsf1232/ministack2.git "$REPO_DIR" >/dev/null 2>&1
             if [ -f "$REPO_DIR/uninstall_minstack.sh" ]; then
                 bash "$REPO_DIR/uninstall_minstack.sh" "$2"
                 rm -rf "$REPO_DIR"

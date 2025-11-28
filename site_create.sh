@@ -70,6 +70,16 @@ create_site() {
     chmod -R 755 "$WEB_ROOT"
 
     DB_ROOT_PASS=$(get_db_root_pass)
+    export MYSQL_PWD="$DB_ROOT_PASS"
+    
+    # Создаем конфигурационный файл MySQL для безопасной передачи пароля
+    MYSQL_CONFIG=$(create_mysql_config "$DB_ROOT_PASS")
+    if [ -n "$MYSQL_CONFIG" ] && [ -f "$MYSQL_CONFIG" ]; then
+        MYSQL_CMD="mysql --defaults-file=$MYSQL_CONFIG -u root"
+        export MYSQL_CONFIG_FILE="$MYSQL_CONFIG"
+    else
+        MYSQL_CMD="mysql -u root"
+    fi
 
     case $TYPE in
         --html)
@@ -115,26 +125,29 @@ create_site() {
             DB_USER="wp_$DB_NAME"
             DB_PASS=$(openssl rand -base64 12)
             
-            if ! mysql -u root -p"$DB_ROOT_PASS" -e "CREATE DATABASE IF NOT EXISTS $DB_NAME;" 2>&1; then
-                log_message "error" "Не удалось создать базу данных $DB_NAME"
+            MYSQL_ERROR=$($MYSQL_CMD -e "CREATE DATABASE IF NOT EXISTS $DB_NAME;" 2>&1)
+            if [ $? -ne 0 ]; then
+                log_message "error" "Не удалось создать базу данных $DB_NAME: $MYSQL_ERROR"
                 cleanup_site "$DOMAIN"
                 ERROR_COUNT=1
                 log_message "info" "Создание сайта завершено" "end_operation" "Создание сайта завершено"
                 exit 1
             fi
             
-            USER_EXISTS=$(mysql -u root -p"$DB_ROOT_PASS" -e "SELECT EXISTS(SELECT 1 FROM mysql.user WHERE User='$DB_USER' AND Host='localhost');" 2>/dev/null | tail -n 1)
+            USER_EXISTS=$($MYSQL_CMD -e "SELECT EXISTS(SELECT 1 FROM mysql.user WHERE User='$DB_USER' AND Host='localhost');" 2>/dev/null | tail -n 1)
             if [ "$USER_EXISTS" = "1" ]; then
-                if ! mysql -u root -p"$DB_ROOT_PASS" -e "ALTER USER '$DB_USER'@'localhost' IDENTIFIED BY '$DB_PASS';" 2>&1; then
-                    log_message "error" "Не удалось обновить пароль пользователя $DB_USER"
+                MYSQL_ERROR=$($MYSQL_CMD -e "ALTER USER '$DB_USER'@'localhost' IDENTIFIED BY '$DB_PASS';" 2>&1)
+                if [ $? -ne 0 ]; then
+                    log_message "error" "Не удалось обновить пароль пользователя $DB_USER: $MYSQL_ERROR"
                     cleanup_site "$DOMAIN"
                     ERROR_COUNT=1
                     log_message "info" "Создание сайта завершено" "end_operation" "Создание сайта завершено"
                     exit 1
                 fi
             else
-                if ! mysql -u root -p"$DB_ROOT_PASS" -e "CREATE USER '$DB_USER'@'localhost' IDENTIFIED BY '$DB_PASS';" 2>&1; then
-                    log_message "error" "Не удалось создать пользователя $DB_USER"
+                MYSQL_ERROR=$($MYSQL_CMD -e "CREATE USER '$DB_USER'@'localhost' IDENTIFIED BY '$DB_PASS';" 2>&1)
+                if [ $? -ne 0 ]; then
+                    log_message "error" "Не удалось создать пользователя $DB_USER: $MYSQL_ERROR"
                     cleanup_site "$DOMAIN"
                     ERROR_COUNT=1
                     log_message "info" "Создание сайта завершено" "end_operation" "Создание сайта завершено"
@@ -142,23 +155,25 @@ create_site() {
                 fi
             fi
             
-            if ! mysql -u root -p"$DB_ROOT_PASS" -e "GRANT ALL PRIVILEGES ON $DB_NAME.* TO '$DB_USER'@'localhost';" 2>&1; then
-                log_message "error" "Не удалось выдать привилегии для пользователя $DB_USER"
+            MYSQL_ERROR=$($MYSQL_CMD -e "GRANT ALL PRIVILEGES ON $DB_NAME.* TO '$DB_USER'@'localhost';" 2>&1)
+            if [ $? -ne 0 ]; then
+                log_message "error" "Не удалось выдать привилегии для пользователя $DB_USER: $MYSQL_ERROR"
                 cleanup_site "$DOMAIN"
                 ERROR_COUNT=1
                 log_message "info" "Создание сайта завершено" "end_operation" "Создание сайта завершено"
                 exit 1
             fi
             
-            if ! mysql -u root -p"$DB_ROOT_PASS" -e "FLUSH PRIVILEGES;" 2>&1; then
-                log_message "error" "Не удалось обновить привилегии"
+            MYSQL_ERROR=$($MYSQL_CMD -e "FLUSH PRIVILEGES;" 2>&1)
+            if [ $? -ne 0 ]; then
+                log_message "error" "Не удалось обновить привилегии: $MYSQL_ERROR"
                 cleanup_site "$DOMAIN"
                 ERROR_COUNT=1
                 log_message "info" "Создание сайта завершено" "end_operation" "Создание сайта завершено"
                 exit 1
             fi
             
-            if mysql -u root -p"$DB_ROOT_PASS" -e "SHOW DATABASES LIKE '$DB_NAME';" 2>&1 | grep -q "$DB_NAME"; then
+            if $MYSQL_CMD -e "SHOW DATABASES LIKE '$DB_NAME';" 2>&1 | grep -q "$DB_NAME"; then
                 log_message "success" "База данных $DB_NAME создана"
             else
                 log_message "error" "База данных $DB_NAME не создана (проверка не прошла)"

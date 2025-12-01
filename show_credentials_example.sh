@@ -46,3 +46,5 @@ echo ""
 echo -e "${GREEN}Для просмотра реального файла в Docker:${NC}"
 echo "bash test_show_credentials.sh"
 
+
+

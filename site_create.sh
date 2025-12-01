@@ -262,6 +262,17 @@ create_site() {
                 log_message "info" "Создание сайта завершено" "end_operation" "Создание сайта завершено"
                 exit 1
             fi
+            
+            # Создаем ключ приложения для WordPress REST API
+            APP_NAME="MiniStack-CLI"
+            APP_PASSWORD=$(sudo -u www-data wp application-password create "$WP_ADMIN_USER" "$APP_NAME" --porcelain --allow-root 2>&1)
+            if [ $? -eq 0 ] && [ -n "$APP_PASSWORD" ]; then
+                log_message "success" "Ключ приложения создан для пользователя $WP_ADMIN_USER"
+            else
+                log_message "warning" "Не удалось создать ключ приложения: $APP_PASSWORD"
+                APP_PASSWORD=""
+            fi
+            
             generate_nginx_config "$DOMAIN" "$WEB_ROOT" "$PHP_VERSION" "$REDIRECT_MODE" "$TYPE"
             init_credentials
             echo "Site: $ORIGINAL_DOMAIN" >> "$SITE_CREDENTIALS" 2>/dev/null
@@ -273,6 +284,9 @@ create_site() {
             echo "WordPress Admin User: $WP_ADMIN_USER" >> "$SITE_CREDENTIALS" 2>/dev/null
             echo "WordPress Admin Password: $WP_ADMIN_PASS" >> "$SITE_CREDENTIALS" 2>/dev/null
             echo "WordPress Admin Email: $WP_ADMIN_EMAIL" >> "$SITE_CREDENTIALS" 2>/dev/null
+            if [ -n "$APP_PASSWORD" ]; then
+                echo "Application Key: $APP_NAME ($WP_ADMIN_USER) - $APP_PASSWORD" >> "$SITE_CREDENTIALS" 2>/dev/null
+            fi
             echo "WordPress DB Name: $DB_NAME" >> "$SITE_CREDENTIALS" 2>/dev/null
             echo "WordPress DB User: $DB_USER" >> "$SITE_CREDENTIALS" 2>/dev/null
             echo "WordPress DB Password: $DB_PASS" >> "$SITE_CREDENTIALS" 2>/dev/null
@@ -280,6 +294,9 @@ create_site() {
             chmod 600 "$SITE_CREDENTIALS" 2>/dev/null
             log_message "success" "Домен успешно создан $ORIGINAL_DOMAIN"
             log_message "success" "WordPress админ: $WP_ADMIN_USER | $WP_ADMIN_PASS (Email: $WP_ADMIN_EMAIL)"
+            if [ -n "$APP_PASSWORD" ]; then
+                log_message "success" "Application Key: $APP_PASSWORD"
+            fi
             log_message "success" "База данных: $DB_NAME, Пользователь: $DB_USER, Пароль: $DB_PASS"
             ;;
     esac

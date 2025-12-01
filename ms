@@ -69,7 +69,7 @@ fi
 
 # Проверка наличия файлов перед их подключением
 LIB_DIR="/usr/local/lib/minStack"
-FILES=("config.sh" "core.sh" "nginx_utils.sh" "utils.sh" "stack_install.sh" "site_create.sh" "site_bulk_create.sh" "site_bulk_delete.sh" "site_delete.sh" "site_info.sh" "secure_ssl.sh" "clean_headers.sh" "show_info.sh")
+FILES=("config.sh" "core.sh" "nginx_utils.sh" "utils.sh" "stack_install.sh" "site_create.sh" "site_bulk_create.sh" "site_bulk_delete.sh" "site_delete.sh" "site_info.sh" "site_app_key.sh" "secure_ssl.sh" "clean_headers.sh" "show_info.sh")
 
 for file in "${FILES[@]}"; do
     if [ ! -f "$LIB_DIR/$file" ]; then
@@ -88,6 +88,7 @@ done
 . "$LIB_DIR/site_bulk_delete.sh"
 . "$LIB_DIR/site_delete.sh"
 . "$LIB_DIR/site_info.sh"
+. "$LIB_DIR/site_app_key.sh"
 . "$LIB_DIR/secure_ssl.sh"
 . "$LIB_DIR/clean_headers.sh"
 . "$LIB_DIR/show_info.sh"
@@ -127,7 +128,14 @@ case "$1" in
                 fi
                 site_info "$3"
                 ;;
-            *) log_message "error" "Укажите --create, --bulk, --bulk-delete, --delete или --info"; exit 1 ;;
+            --app-key)
+                if [ -z "$3" ] || [ -z "$4" ] || [ -z "$5" ]; then
+                    log_message "error" "Укажите домен, имя пользователя и название приложения после --app-key, например: sudo ms site --app-key example.com admin MyApp"
+                    exit 1
+                fi
+                create_app_key "$3" "$4" "$5"
+                ;;
+            *) log_message "error" "Укажите --create, --bulk, --bulk-delete, --delete, --info или --app-key"; exit 1 ;;
         esac
         ;;
     secure)

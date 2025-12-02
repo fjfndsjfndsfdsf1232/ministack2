@@ -69,7 +69,7 @@ fi
 
 # Проверка наличия файлов перед их подключением
 LIB_DIR="/usr/local/lib/minStack"
-FILES=("config.sh" "core.sh" "nginx_utils.sh" "utils.sh" "stack_install.sh" "site_create.sh" "site_bulk_create.sh" "site_bulk_delete.sh" "site_delete.sh" "site_info.sh" "site_app_key.sh" "secure_ssl.sh" "clean_headers.sh" "show_info.sh")
+FILES=("config.sh" "core.sh" "nginx_utils.sh" "utils.sh" "stack_install.sh" "site_create.sh" "site_bulk_create.sh" "site_bulk_create_multisite.sh" "site_bulk_delete.sh" "site_delete.sh" "site_info.sh" "site_app_key.sh" "secure_ssl.sh" "clean_headers.sh" "show_info.sh")
 
 for file in "${FILES[@]}"; do
     if [ ! -f "$LIB_DIR/$file" ]; then
@@ -85,6 +85,7 @@ done
 . "$LIB_DIR/stack_install.sh"
 . "$LIB_DIR/site_create.sh"
 . "$LIB_DIR/site_bulk_create.sh"
+. "$LIB_DIR/site_bulk_create_multisite.sh"
 . "$LIB_DIR/site_bulk_delete.sh"
 . "$LIB_DIR/site_delete.sh"
 . "$LIB_DIR/site_info.sh"
@@ -113,6 +114,7 @@ case "$1" in
                 fi
                 ;;
             --bulk) bulk_create_sites ;;
+            --bulk-multisite) bulk_create_sites_multisite ;;
             --bulk-delete) bulk_delete_sites ;;
             --delete)
                 if [ -z "$3" ]; then
@@ -135,7 +137,7 @@ case "$1" in
                 fi
                 create_app_key "$3" "$4" "$5"
                 ;;
-            *) log_message "error" "Укажите --create, --bulk, --bulk-delete, --delete, --info или --app-key"; exit 1 ;;
+            *) log_message "error" "Укажите --create, --bulk, --bulk-multisite, --bulk-delete, --delete, --info или --app-key"; exit 1 ;;
         esac
         ;;
     secure)

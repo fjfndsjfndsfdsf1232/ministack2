@@ -1,5 +1,5 @@
 # site_bulk_create_multisite.sh - Команда для массового создания сайтов в WordPress Multisite
-# Версия 1.0.0
+# Версия 2.0.0 - Переработано согласно инструкции по WordPress Multisite с разными доменами
 
 bulk_create_sites_multisite() {
     clean_old_logs
@@ -240,10 +240,11 @@ bulk_create_sites_multisite() {
             exit 1
         fi
         
-        # Добавляем поддержку multisite
-        sed -i "/^define('DB_COLLATE'/a define('WP_ALLOW_MULTISITE', true);" "$MULTISITE_ROOT/wp-config.php"
+        # Добавляем поддержку multisite перед комментарием "That's all"
+        sed -i "/\/\* That's all, stop editing/i\\
+define('WP_ALLOW_MULTISITE', true);" "$MULTISITE_ROOT/wp-config.php"
         
-        # Добавляем поддержку HTTPS через прокси
+        # Добавляем поддержку HTTPS через прокси в начало файла
         sed -i "1a if (isset(\$_SERVER['HTTP_X_FORWARDED_PROTO']) && \$_SERVER['HTTP_X_FORWARDED_PROTO'] === 'https') { \$_SERVER['HTTPS'] = 'on'; }" "$MULTISITE_ROOT/wp-config.php"
         
         log_message "success" "wp-config.php создан с поддержкой multisite"
@@ -256,57 +257,38 @@ bulk_create_sites_multisite() {
         WP_ADMIN_USER="admin_$(openssl rand -hex 4)"
         WP_ADMIN_PASS=$(openssl rand -base64 12)
         WP_ADMIN_EMAIL="admin@$MAIN_ORIGINAL_DOMAIN"
-        WP_SITE_TITLE="$MAIN_ORIGINAL_DOMAIN"
+        WP_SITE_TITLE="$MAIN_ORIGINAL_DOMAIN Network"
         
-        # Устанавливаем WordPress обычным способом сначала
-        sudo -u www-data wp core install --url="http://$MAIN_DOMAIN" --title="$WP_SITE_TITLE" --admin_user="$WP_ADMIN_USER" --admin_password="$WP_ADMIN_PASS" --admin_email="$WP_ADMIN_EMAIL" --allow-root >/dev/null 2>&1
-        if [ $? -ne 0 ]; then
-            log_message "error" "WordPress не установлен"
-            exit 1
-        fi
+        # Устанавливаем WordPress Multisite напрямую (без предварительной установки обычного WordPress)
+        # Используем --subdomains=false для подкаталогов (но мы настроим domain mapping)
+        sudo -u www-data wp core multisite-install \
+            --url="http://$MAIN_DOMAIN" \
+            --title="$WP_SITE_TITLE" \
+            --admin_user="$WP_ADMIN_USER" \
+            --admin_password="$WP_ADMIN_PASS" \
+            --admin_email="$WP_ADMIN_EMAIL" \
+            --subdomains=false \
+            --allow-root >/dev/null 2>&1
         
-        # Включаем multisite (subdomain=false означает использование подкаталогов, но мы настроим для доменов)
-        # Для работы с разными доменами нужно использовать --subdomains=false и затем настроить SUNRISE
-        sudo -u www-data wp core multisite-install --subdomains=false --url="http://$MAIN_DOMAIN" --title="$WP_SITE_TITLE" --admin_user="$WP_ADMIN_USER" --admin_password="$WP_ADMIN_PASS" --admin_email="$WP_ADMIN_EMAIL" --allow-root >/dev/null 2>&1
         if [ $? -ne 0 ]; then
             log_message "error" "WordPress Multisite не установлен"
             exit 1
         fi
         
-        # Для работы с разными доменами нужно включить SUNRISE в wp-config.php
-        # Это позволяет WordPress определять сайт по домену
-        if ! grep -q "define('SUNRISE', 'on');" "$MULTISITE_ROOT/wp-config.php"; then
-            sed -i "/^define('WP_ALLOW_MULTISITE'/a define('SUNRISE', 'on');" "$MULTISITE_ROOT/wp-config.php"
-            log_message "info" "Включен SUNRISE для поддержки разных доменов"
+        # После установки multisite, wp-config.php будет обновлен с константами MULTISITE
+        # Обновляем domain главного сайта в базе данных
+        if [ -n "$MYSQL_CONFIG_FILE" ] && [ -f "$MYSQL_CONFIG_FILE" ]; then
+            MYSQL_CMD="mysql --defaults-file=$MYSQL_CONFIG_FILE -u root"
+        else
+            MYSQL_CMD="mysql -u root"
         fi
         
-        # Копируем sunrise.php если его нет
-        if [ ! -f "$MULTISITE_ROOT/wp-content/sunrise.php" ]; then
-            # Создаём базовый sunrise.php для определения сайта по домену
-            cat > "$MULTISITE_ROOT/wp-content/sunrise.php" <<'SUNRISE_EOF'
-<?php
-// Sunrise для WordPress Multisite с разными доменами
-// Определяем сайт по домену
-$current_domain = $_SERVER['HTTP_HOST'];
-if (empty($current_domain)) {
-    $current_domain = $_SERVER['SERVER_NAME'];
-}
-
-// Получаем ID сайта по домену из базы данных
-global $wpdb;
-$site_id = $wpdb->get_var($wpdb->prepare(
-    "SELECT blog_id FROM {$wpdb->blogs} WHERE domain = %s LIMIT 1",
-    $current_domain
-));
-
-if ($site_id) {
-    $GLOBALS['blog_id'] = $site_id;
-}
-SUNRISE_EOF
-            chown www-data:www-data "$MULTISITE_ROOT/wp-content/sunrise.php"
-            chmod 644 "$MULTISITE_ROOT/wp-content/sunrise.php"
-            log_message "info" "Создан sunrise.php для определения сайта по домену"
-        fi
+        # Обновляем domain главного сайта в таблице wp_blogs
+        $MYSQL_CMD -D "$MULTISITE_DB_NAME" -e "UPDATE wp_blogs SET domain='$MAIN_DOMAIN' WHERE blog_id=1;" 2>/dev/null
+        
+        # Обновляем опции главного сайта
+        sudo -u www-data wp option update home "http://$MAIN_DOMAIN" --url="$MAIN_DOMAIN" --allow-root >/dev/null 2>&1
+        sudo -u www-data wp option update siteurl "http://$MAIN_DOMAIN" --url="$MAIN_DOMAIN" --allow-root >/dev/null 2>&1
         
         log_message "success" "WordPress Multisite установлен на главном домене $MAIN_ORIGINAL_DOMAIN"
         log_message "success" "WordPress админ: $WP_ADMIN_USER | $WP_ADMIN_PASS (Email: $WP_ADMIN_EMAIL)"
@@ -357,64 +339,70 @@ SUNRISE_EOF
             continue
         fi
         
-        # Добавляем сайт в WordPress Multisite
+        # Добавляем сайт в WordPress Multisite (только для дополнительных доменов)
         if [ "$domain" != "$MAIN_DOMAIN" ]; then
             log_message "info" "Добавляем сайт $original_domain в WordPress Multisite..."
-            # Используем slug на основе домена (без точек)
-            site_slug=$(echo "$domain" | sed 's/[^a-zA-Z0-9]/-/g' | tr '[:upper:]' '[:lower:]')
             
-            # Пробуем использовать wp-cli для создания сайта
-            # Для multisite с разными доменами нужно использовать --domain
-            SITE_CREATE_OUTPUT=$(sudo -u www-data wp site create --slug="$site_slug" --domain="$domain" --title="$original_domain" --allow-root 2>&1)
+            # Создаём slug на основе домена (без точек и спецсимволов)
+            site_slug=$(echo "$domain" | sed 's/[^a-zA-Z0-9]/-/g' | tr '[:upper:]' '[:lower:]' | sed 's/--*/-/g' | sed 's/^-\|-$//g')
             
-            if [ $? -eq 0 ]; then
-                log_message "success" "Сайт $original_domain добавлен в WordPress Multisite через wp-cli"
-            else
-                # Если wp-cli не работает, используем прямой SQL запрос
-                log_message "info" "Пробуем добавить сайт $original_domain через SQL..."
+            # Создаём сайт через wp-cli (без флага --domain, только --slug)
+            SITE_ID=$(sudo -u www-data wp site create \
+                --slug="$site_slug" \
+                --title="$original_domain" \
+                --email="admin@$original_domain" \
+                --porcelain \
+                --allow-root 2>&1)
+            
+            if [ $? -eq 0 ] && [ -n "$SITE_ID" ] && [ "$SITE_ID" != "0" ]; then
+                log_message "success" "Сайт $original_domain создан в WordPress Multisite (Site ID: $SITE_ID)"
+                
+                # Обновляем domain в таблице wp_blogs напрямую в базе данных
                 if [ -n "$MYSQL_CONFIG_FILE" ] && [ -f "$MYSQL_CONFIG_FILE" ]; then
                     MYSQL_CMD="mysql --defaults-file=$MYSQL_CONFIG_FILE -u root"
                 else
                     MYSQL_CMD="mysql -u root"
                 fi
                 
-                # Проверяем, существует ли уже сайт с таким доменом
-                SITE_EXISTS=$($MYSQL_CMD -D "$MULTISITE_DB_NAME" -e "SELECT blog_id FROM wp_blogs WHERE domain='$domain' LIMIT 1;" 2>/dev/null | tail -n 1)
+                # Обновляем domain в таблице wp_blogs (это ключевой шаг для работы разных доменов)
+                $MYSQL_CMD -D "$MULTISITE_DB_NAME" -e "UPDATE wp_blogs SET domain='$domain' WHERE blog_id=$SITE_ID;" 2>/dev/null
                 
-                if [ -z "$SITE_EXISTS" ] || [ "$SITE_EXISTS" = "" ]; then
-                    # Добавляем сайт в базу данных
-                    $MYSQL_CMD -D "$MULTISITE_DB_NAME" -e "INSERT INTO wp_blogs (domain, path, registered, last_updated) VALUES ('$domain', '/', NOW(), NOW());" 2>/dev/null
-                    
-                    if [ $? -eq 0 ]; then
-                        # Получаем реальный blog_id
-                        BLOG_ID=$($MYSQL_CMD -D "$MULTISITE_DB_NAME" -e "SELECT blog_id FROM wp_blogs WHERE domain='$domain' LIMIT 1;" 2>/dev/null | tail -n 1)
-                        
-                        if [ -n "$BLOG_ID" ] && [ "$BLOG_ID" != "1" ]; then
-                            # Используем wp-cli для создания таблиц и базовых настроек
-                            sudo -u www-data wp db cli --url="$domain" --allow-root < /dev/null >/dev/null 2>&1 || true
-                            
-                            # Устанавливаем базовые опции через wp-cli
-                            sudo -u www-data wp option add blogname "$original_domain" --url="$domain" --allow-root >/dev/null 2>&1 || true
-                            sudo -u www-data wp option add siteurl "http://$domain" --url="$domain" --allow-root >/dev/null 2>&1 || true
-                            sudo -u www-data wp option add home "http://$domain" --url="$domain" --allow-root >/dev/null 2>&1 || true
-                            
-                            log_message "success" "Сайт $original_domain добавлен в WordPress Multisite (Blog ID: $BLOG_ID)"
-                        else
-                            log_message "warning" "Не удалось получить Blog ID для сайта $original_domain"
-                        fi
-                    else
-                        log_message "warning" "Не удалось добавить сайт $original_domain в базу данных: $SITE_CREATE_OUTPUT"
-                    fi
+                if [ $? -eq 0 ]; then
+                    log_message "success" "Domain обновлен в базе данных для сайта $original_domain"
                 else
-                    log_message "info" "Сайт $original_domain уже существует в WordPress Multisite (Blog ID: $SITE_EXISTS)"
+                    log_message "warning" "Не удалось обновить domain в базе данных"
                 fi
+                
+                # Обновляем опции home и siteurl для нового сайта через --url
+                # Используем временный URL для обновления опций (по blog_id)
+                sudo -u www-data wp option update home "http://$domain" --url="http://$MAIN_DOMAIN/$site_slug/" --allow-root >/dev/null 2>&1
+                sudo -u www-data wp option update siteurl "http://$domain" --url="http://$MAIN_DOMAIN/$site_slug/" --allow-root >/dev/null 2>&1
+                
+                # Также пробуем обновить через прямой SQL запрос в таблице опций
+                TABLE_PREFIX="wp_${SITE_ID}_"
+                $MYSQL_CMD -D "$MULTISITE_DB_NAME" -e "UPDATE ${TABLE_PREFIX}options SET option_value='http://$domain' WHERE option_name='home';" 2>/dev/null
+                $MYSQL_CMD -D "$MULTISITE_DB_NAME" -e "UPDATE ${TABLE_PREFIX}options SET option_value='http://$domain' WHERE option_name='siteurl';" 2>/dev/null
+                
+                log_message "success" "Настройки домена $original_domain обновлены (Site ID: $SITE_ID)"
+            else
+                log_message "error" "Не удалось создать сайт $original_domain: $SITE_ID"
+                ((ERROR_COUNT++))
+                continue
             fi
+        else
+            # Для главного домена просто обновляем опции
+            log_message "info" "Обновляем настройки главного домена $original_domain..."
+            sudo -u www-data wp option update home "http://$domain" --url="$domain" --allow-root >/dev/null 2>&1
+            sudo -u www-data wp option update siteurl "http://$domain" --url="$domain" --allow-root >/dev/null 2>&1
         fi
         
         # Настраиваем SSL, если требуется
         if [ "$SSL_ENABLED" = "yes" ]; then
             if setup_ssl "$domain" "$SSL_TYPE"; then
                 log_message "success" "SSL ($SSL_TYPE) установлен для $original_domain"
+                # Обновляем опции на HTTPS после установки SSL
+                sudo -u www-data wp option update home "https://$domain" --url="$domain" --allow-root >/dev/null 2>&1
+                sudo -u www-data wp option update siteurl "https://$domain" --url="$domain" --allow-root >/dev/null 2>&1
             else
                 log_message "warning" "Не удалось установить SSL ($SSL_TYPE) для $original_domain"
             fi
@@ -432,6 +420,9 @@ SUNRISE_EOF
         fi
         echo "Redirect: $REDIRECT_MODE" >> "$SITE_CREDENTIALS" 2>/dev/null
         echo "Multisite Network: Yes" >> "$SITE_CREDENTIALS" 2>/dev/null
+        if [ "$domain" != "$MAIN_DOMAIN" ] && [ -n "$SITE_ID" ]; then
+            echo "Multisite Site ID: $SITE_ID" >> "$SITE_CREDENTIALS" 2>/dev/null
+        fi
         echo "-------------------" >> "$SITE_CREDENTIALS" 2>/dev/null
         chmod 600 "$SITE_CREDENTIALS" 2>/dev/null
         
@@ -461,5 +452,5 @@ SUNRISE_EOF
     log_message "info" "Массовый деплой WordPress Multisite завершён" "end_operation" "Массовый деплой WordPress Multisite завершён"
     log_message "info" "Все сайты используют одну установку WordPress в $MULTISITE_ROOT"
     log_message "info" "Для управления сайтами используйте: sudo -u www-data wp site list --allow-root"
+    log_message "info" "Для проверки конкретного сайта: sudo -u www-data wp option get home --url=domain.com --allow-root"
 }
-

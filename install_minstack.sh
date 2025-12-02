@@ -62,7 +62,7 @@ echo -e "${BLUE}Клонируем репозиторий...${NC}"
 sudo git clone https://github.com/fjfndsjfndsfdsf1232/ministack2.git "$REPO_DIR"
 
 # Проверка наличия файлов
-FILES=("ms" "config.sh" "core.sh" "nginx_utils.sh" "stack_install.sh" "site_create.sh" "site_bulk_create.sh" "site_bulk_delete.sh" "site_delete.sh" "site_info.sh" "secure_ssl.sh" "clean_headers.sh" "show_info.sh" "utils.sh" "update_minstack.sh" "uninstall_minstack.sh")
+FILES=("ms" "config.sh" "core.sh" "nginx_utils.sh" "stack_install.sh" "site_create.sh" "site_bulk_create.sh" "site_bulk_create_multisite.sh" "site_bulk_delete.sh" "site_delete.sh" "site_info.sh" "site_app_key.sh" "secure_ssl.sh" "clean_headers.sh" "show_info.sh" "utils.sh" "update_minstack.sh" "uninstall_minstack.sh")
 for file in "${FILES[@]}"; do
     if [ ! -f "$REPO_DIR/$file" ]; then
         echo -e "${RED}Ошибка: файл $file не найден в репозитории${NC}"
@@ -94,9 +94,11 @@ sudo cp "$REPO_DIR/nginx_utils.sh" /usr/local/lib/minStack/nginx_utils.sh
 sudo cp "$REPO_DIR/stack_install.sh" /usr/local/lib/minStack/stack_install.sh
 sudo cp "$REPO_DIR/site_create.sh" /usr/local/lib/minStack/site_create.sh
 sudo cp "$REPO_DIR/site_bulk_create.sh" /usr/local/lib/minStack/site_bulk_create.sh
+sudo cp "$REPO_DIR/site_bulk_create_multisite.sh" /usr/local/lib/minStack/site_bulk_create_multisite.sh
 sudo cp "$REPO_DIR/site_bulk_delete.sh" /usr/local/lib/minStack/site_bulk_delete.sh
 sudo cp "$REPO_DIR/site_delete.sh" /usr/local/lib/minStack/site_delete.sh
 sudo cp "$REPO_DIR/site_info.sh" /usr/local/lib/minStack/site_info.sh
+sudo cp "$REPO_DIR/site_app_key.sh" /usr/local/lib/minStack/site_app_key.sh
 sudo cp "$REPO_DIR/secure_ssl.sh" /usr/local/lib/minStack/secure_ssl.sh
 sudo cp "$REPO_DIR/clean_headers.sh" /usr/local/lib/minStack/clean_headers.sh
 sudo cp "$REPO_DIR/show_info.sh" /usr/local/lib/minStack/show_info.sh

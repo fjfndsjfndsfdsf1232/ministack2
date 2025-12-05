@@ -56,10 +56,10 @@ if ! git clone https://github.com/fjfndsjfndsfdsf1232/ministack2.git "$REPO_DIR"
     exit 1
 fi
 
-# Проверка наличия обязательных файлов
-REQUIRED_FILES=("ms" "config.sh" "core.sh" "nginx_utils.sh" "stack_install.sh" "site_create.sh" "site_bulk_create.sh" "site_bulk_delete.sh" "site_delete.sh" "site_info.sh" "secure_ssl.sh" "clean_headers.sh" "show_info.sh" "utils.sh")
+# Проверка наличия файлов
+FILES=("ms" "config.sh" "core.sh" "nginx_utils.sh" "stack_install.sh" "site_create.sh" "site_bulk_create.sh" "site_bulk_delete.sh" "site_delete.sh" "site_info.sh" "secure_ssl.sh" "clean_headers.sh" "show_info.sh" "utils.sh")
 echo -e "${BLUE}Проверяем наличие файлов...${NC}"
-for file in "${REQUIRED_FILES[@]}"; do
+for file in "${FILES[@]}"; do
     if [ ! -f "$REPO_DIR/$file" ]; then
         echo -e "${RED}Ошибка: файл $file не найден в репозитории${NC}"
         rm -rf "$REPO_DIR"
@@ -67,24 +67,13 @@ for file in "${REQUIRED_FILES[@]}"; do
     fi
 done
 
-# Проверка наличия опциональных файлов
-OPTIONAL_FILES=("site_bulk_create_multisite.sh" "site_app_key.sh")
-for file in "${OPTIONAL_FILES[@]}"; do
-    if [ ! -f "$REPO_DIR/$file" ]; then
-        echo -e "${YELLOW}Предупреждение: файл $file не найден в репозитории, пропускаем...${NC}"
-    fi
-done
-
 # Конвертация CRLF в LF
 echo -e "${BLUE}Конвертируем файлы в формат LF...${NC}"
-ALL_FILES=("${REQUIRED_FILES[@]}" "${OPTIONAL_FILES[@]}")
-for file in "${ALL_FILES[@]}"; do
-    if [ -f "$REPO_DIR/$file" ]; then
-        if command -v dos2unix >/dev/null 2>&1; then
-            dos2unix "$REPO_DIR/$file" >/dev/null 2>&1
-        else
-            sed -i 's/\r$//' "$REPO_DIR/$file"
-        fi
+for file in "${FILES[@]}"; do
+    if command -v dos2unix >/dev/null 2>&1; then
+        dos2unix "$REPO_DIR/$file" >/dev/null 2>&1
+    else
+        sed -i 's/\r$//' "$REPO_DIR/$file"
     fi
 done
 
@@ -110,15 +99,9 @@ cp "$REPO_DIR/nginx_utils.sh" /usr/local/lib/minStack/nginx_utils.sh
 cp "$REPO_DIR/stack_install.sh" /usr/local/lib/minStack/stack_install.sh
 cp "$REPO_DIR/site_create.sh" /usr/local/lib/minStack/site_create.sh
 cp "$REPO_DIR/site_bulk_create.sh" /usr/local/lib/minStack/site_bulk_create.sh
-if [ -f "$REPO_DIR/site_bulk_create_multisite.sh" ]; then
-    cp "$REPO_DIR/site_bulk_create_multisite.sh" /usr/local/lib/minStack/site_bulk_create_multisite.sh
-fi
 cp "$REPO_DIR/site_bulk_delete.sh" /usr/local/lib/minStack/site_bulk_delete.sh
 cp "$REPO_DIR/site_delete.sh" /usr/local/lib/minStack/site_delete.sh
 cp "$REPO_DIR/site_info.sh" /usr/local/lib/minStack/site_info.sh
-if [ -f "$REPO_DIR/site_app_key.sh" ]; then
-    cp "$REPO_DIR/site_app_key.sh" /usr/local/lib/minStack/site_app_key.sh
-fi
 cp "$REPO_DIR/secure_ssl.sh" /usr/local/lib/minStack/secure_ssl.sh
 cp "$REPO_DIR/clean_headers.sh" /usr/local/lib/minStack/clean_headers.sh
 cp "$REPO_DIR/show_info.sh" /usr/local/lib/minStack/show_info.sh

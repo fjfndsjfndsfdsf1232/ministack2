@@ -1,5 +1,5 @@
 # site_bulk_create_multisite.sh - Команда для массового создания сайтов в WordPress Multisite
-# Версия 2.0.0 - Переработано согласно инструкции по WordPress Multisite с разными доменами
+# Версия 2.1.0 - Исправлено для полной работоспособности domain mapping с несколькими доменами
 
 bulk_create_sites_multisite() {
     clean_old_logs
@@ -276,6 +276,16 @@ define('WP_ALLOW_MULTISITE', true);" "$MULTISITE_ROOT/wp-config.php"
         fi
         
         # После установки multisite, wp-config.php будет обновлен с константами MULTISITE
+        # Добавляем константу SUNRISE для поддержки domain mapping (если её еще нет)
+        if ! grep -q "define.*SUNRISE" "$MULTISITE_ROOT/wp-config.php" 2>/dev/null; then
+            # Находим место после констант MULTISITE и добавляем SUNRISE
+            if grep -q "define.*MULTISITE" "$MULTISITE_ROOT/wp-config.php" 2>/dev/null; then
+                sed -i "/define.*MULTISITE/a\\
+define('SUNRISE', 'on');" "$MULTISITE_ROOT/wp-config.php"
+                log_message "success" "Константа SUNRISE добавлена в wp-config.php для domain mapping"
+            fi
+        fi
+        
         # Обновляем domain главного сайта в базе данных
         if [ -n "$MYSQL_CONFIG_FILE" ] && [ -f "$MYSQL_CONFIG_FILE" ]; then
             MYSQL_CMD="mysql --defaults-file=$MYSQL_CONFIG_FILE -u root"
@@ -286,9 +296,15 @@ define('WP_ALLOW_MULTISITE', true);" "$MULTISITE_ROOT/wp-config.php"
         # Обновляем domain главного сайта в таблице wp_blogs
         $MYSQL_CMD -D "$MULTISITE_DB_NAME" -e "UPDATE wp_blogs SET domain='$MAIN_DOMAIN' WHERE blog_id=1;" 2>/dev/null
         
-        # Обновляем опции главного сайта
-        sudo -u www-data wp option update home "http://$MAIN_DOMAIN" --url="$MAIN_DOMAIN" --allow-root >/dev/null 2>&1
-        sudo -u www-data wp option update siteurl "http://$MAIN_DOMAIN" --url="$MAIN_DOMAIN" --allow-root >/dev/null 2>&1
+        # Обновляем опции главного сайта через wp-cli с правильным --url
+        sudo -u www-data wp option update home "http://$MAIN_DOMAIN" --url="http://$MAIN_DOMAIN" --allow-root >/dev/null 2>&1
+        sudo -u www-data wp option update siteurl "http://$MAIN_DOMAIN" --url="http://$MAIN_DOMAIN" --allow-root >/dev/null 2>&1
+        
+        # Также обновляем через прямой SQL запрос для надежности
+        $MYSQL_CMD -D "$MULTISITE_DB_NAME" -e "UPDATE wp_options SET option_value='http://$MAIN_DOMAIN' WHERE option_name IN ('home', 'siteurl');" 2>/dev/null
+        
+        # Обновляем wp_site_options для главного сайта (если таблица существует)
+        $MYSQL_CMD -D "$MULTISITE_DB_NAME" -e "UPDATE wp_site SET domain='$MAIN_DOMAIN' WHERE id=1;" 2>/dev/null
         
         log_message "success" "WordPress Multisite установлен на главном домене $MAIN_ORIGINAL_DOMAIN"
         log_message "success" "WordPress админ: $WP_ADMIN_USER | $WP_ADMIN_PASS (Email: $WP_ADMIN_EMAIL)"
@@ -306,6 +322,21 @@ define('WP_ALLOW_MULTISITE', true);" "$MULTISITE_ROOT/wp-config.php"
         echo "-------------------" >> "$SITE_CREDENTIALS" 2>/dev/null
     else
         log_message "info" "WordPress Multisite уже установлен"
+        
+        # Проверяем и обновляем wp-config.php для существующей установки
+        # Убеждаемся, что константа SUNRISE присутствует для domain mapping
+        if ! grep -q "define.*SUNRISE" "$MULTISITE_ROOT/wp-config.php" 2>/dev/null; then
+            if grep -q "define.*MULTISITE" "$MULTISITE_ROOT/wp-config.php" 2>/dev/null; then
+                sed -i "/define.*MULTISITE/a\\
+define('SUNRISE', 'on');" "$MULTISITE_ROOT/wp-config.php"
+                log_message "success" "Константа SUNRISE добавлена в существующий wp-config.php"
+            fi
+        fi
+        
+        # Проверяем, что константы MULTISITE правильно настроены
+        if ! grep -q "define.*MULTISITE.*true" "$MULTISITE_ROOT/wp-config.php" 2>/dev/null; then
+            log_message "warning" "Константа MULTISITE не найдена или не установлена в true"
+        fi
     fi
     
     SUCCESS_COUNT=0
@@ -374,14 +405,20 @@ define('WP_ALLOW_MULTISITE', true);" "$MULTISITE_ROOT/wp-config.php"
                 fi
                 
                 # Обновляем опции home и siteurl для нового сайта через --url
-                # Используем временный URL для обновления опций (по blog_id)
-                sudo -u www-data wp option update home "http://$domain" --url="http://$MAIN_DOMAIN/$site_slug/" --allow-root >/dev/null 2>&1
-                sudo -u www-data wp option update siteurl "http://$domain" --url="http://$MAIN_DOMAIN/$site_slug/" --allow-root >/dev/null 2>&1
+                # Используем временный URL для обновления опций (по blog_id через slug)
+                TEMP_URL="http://$MAIN_DOMAIN/$site_slug/"
+                sudo -u www-data wp option update home "http://$domain" --url="$TEMP_URL" --allow-root >/dev/null 2>&1
+                sudo -u www-data wp option update siteurl "http://$domain" --url="$TEMP_URL" --allow-root >/dev/null 2>&1
                 
-                # Также пробуем обновить через прямой SQL запрос в таблице опций
+                # Также обновляем через прямой SQL запрос в таблице опций для надежности
                 TABLE_PREFIX="wp_${SITE_ID}_"
                 $MYSQL_CMD -D "$MULTISITE_DB_NAME" -e "UPDATE ${TABLE_PREFIX}options SET option_value='http://$domain' WHERE option_name='home';" 2>/dev/null
                 $MYSQL_CMD -D "$MULTISITE_DB_NAME" -e "UPDATE ${TABLE_PREFIX}options SET option_value='http://$domain' WHERE option_name='siteurl';" 2>/dev/null
+                
+                # Обновляем domain также через прямой домен (для domain mapping)
+                # Это позволяет WordPress правильно определить сайт по домену
+                sudo -u www-data wp option update home "http://$domain" --url="http://$domain" --allow-root >/dev/null 2>&1 || true
+                sudo -u www-data wp option update siteurl "http://$domain" --url="http://$domain" --allow-root >/dev/null 2>&1 || true
                 
                 log_message "success" "Настройки домена $original_domain обновлены (Site ID: $SITE_ID)"
             else
@@ -390,10 +427,22 @@ define('WP_ALLOW_MULTISITE', true);" "$MULTISITE_ROOT/wp-config.php"
                 continue
             fi
         else
-            # Для главного домена просто обновляем опции
+            # Для главного домена обновляем опции и базу данных
             log_message "info" "Обновляем настройки главного домена $original_domain..."
-            sudo -u www-data wp option update home "http://$domain" --url="$domain" --allow-root >/dev/null 2>&1
-            sudo -u www-data wp option update siteurl "http://$domain" --url="$domain" --allow-root >/dev/null 2>&1
+            
+            # Обновляем через wp-cli
+            sudo -u www-data wp option update home "http://$domain" --url="http://$domain" --allow-root >/dev/null 2>&1
+            sudo -u www-data wp option update siteurl "http://$domain" --url="http://$domain" --allow-root >/dev/null 2>&1
+            
+            # Также обновляем через прямой SQL запрос для надежности
+            if [ -n "$MYSQL_CONFIG_FILE" ] && [ -f "$MYSQL_CONFIG_FILE" ]; then
+                MYSQL_CMD="mysql --defaults-file=$MYSQL_CONFIG_FILE -u root"
+            else
+                MYSQL_CMD="mysql -u root"
+            fi
+            $MYSQL_CMD -D "$MULTISITE_DB_NAME" -e "UPDATE wp_options SET option_value='http://$domain' WHERE option_name IN ('home', 'siteurl');" 2>/dev/null
+            $MYSQL_CMD -D "$MULTISITE_DB_NAME" -e "UPDATE wp_blogs SET domain='$domain' WHERE blog_id=1;" 2>/dev/null
+            $MYSQL_CMD -D "$MULTISITE_DB_NAME" -e "UPDATE wp_site SET domain='$domain' WHERE id=1;" 2>/dev/null
         fi
         
         # Настраиваем SSL, если требуется

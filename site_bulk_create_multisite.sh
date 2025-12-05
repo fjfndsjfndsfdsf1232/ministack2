@@ -200,43 +200,104 @@ bulk_create_sites_multisite() {
             log_message "error" "Не удалось создать базу данных $MULTISITE_DB_NAME: $MYSQL_ERROR"
             exit 1
         fi
-        
-        USER_EXISTS=$($MYSQL_CMD -e "SELECT EXISTS(SELECT 1 FROM mysql.user WHERE User='$MULTISITE_DB_USER' AND Host='localhost');" 2>/dev/null | tail -n 1)
-        if [ "$USER_EXISTS" = "1" ]; then
-            MYSQL_ERROR=$($MYSQL_CMD -e "ALTER USER '$MULTISITE_DB_USER'@'localhost' IDENTIFIED BY '$MULTISITE_DB_PASS';" 2>&1)
-        else
-            MYSQL_ERROR=$($MYSQL_CMD -e "CREATE USER '$MULTISITE_DB_USER'@'localhost' IDENTIFIED BY '$MULTISITE_DB_PASS';" 2>&1)
-        fi
-        
-        if [ $? -ne 0 ]; then
-            log_message "error" "Не удалось создать/обновить пользователя $MULTISITE_DB_USER: $MYSQL_ERROR"
-            exit 1
-        fi
-        
-        MYSQL_ERROR=$($MYSQL_CMD -e "GRANT ALL PRIVILEGES ON $MULTISITE_DB_NAME.* TO '$MULTISITE_DB_USER'@'localhost';" 2>&1)
-        if [ $? -ne 0 ]; then
-            log_message "error" "Не удалось выдать привилегии для пользователя $MULTISITE_DB_USER: $MYSQL_ERROR"
-            exit 1
-        fi
-        
-        MYSQL_ERROR=$($MYSQL_CMD -e "FLUSH PRIVILEGES;" 2>&1)
-        if [ $? -ne 0 ]; then
-            log_message "error" "Не удалось обновить привилегии: $MYSQL_ERROR"
-            exit 1
-        fi
-        
-        log_message "success" "База данных $MULTISITE_DB_NAME создана"
+        DB_CREATED=1
     else
         log_message "info" "База данных $MULTISITE_DB_NAME уже существует"
+        DB_CREATED=0
     fi
+    
+    # Проверяем и создаём/обновляем пользователя базы данных
+    USER_EXISTS=$($MYSQL_CMD -e "SELECT EXISTS(SELECT 1 FROM mysql.user WHERE User='$MULTISITE_DB_USER' AND Host='localhost');" 2>/dev/null | tail -n 1)
+    if [ "$USER_EXISTS" = "1" ]; then
+        log_message "info" "Обновляем пароль пользователя $MULTISITE_DB_USER..."
+        MYSQL_ERROR=$($MYSQL_CMD -e "ALTER USER '$MULTISITE_DB_USER'@'localhost' IDENTIFIED BY '$MULTISITE_DB_PASS';" 2>&1)
+        if [ $? -ne 0 ]; then
+            log_message "error" "Не удалось обновить пароль пользователя $MULTISITE_DB_USER: $MYSQL_ERROR"
+            exit 1
+        fi
+    else
+        log_message "info" "Создаём пользователя базы данных $MULTISITE_DB_USER..."
+        MYSQL_ERROR=$($MYSQL_CMD -e "CREATE USER '$MULTISITE_DB_USER'@'localhost' IDENTIFIED BY '$MULTISITE_DB_PASS';" 2>&1)
+        if [ $? -ne 0 ]; then
+            log_message "error" "Не удалось создать пользователя $MULTISITE_DB_USER: $MYSQL_ERROR"
+            exit 1
+        fi
+    fi
+    
+    # Выдаём привилегии пользователю
+    log_message "info" "Выдаём привилегии пользователю $MULTISITE_DB_USER..."
+    MYSQL_ERROR=$($MYSQL_CMD -e "GRANT ALL PRIVILEGES ON $MULTISITE_DB_NAME.* TO '$MULTISITE_DB_USER'@'localhost';" 2>&1)
+    if [ $? -ne 0 ]; then
+        log_message "error" "Не удалось выдать привилегии для пользователя $MULTISITE_DB_USER: $MYSQL_ERROR"
+        exit 1
+    fi
+    
+    MYSQL_ERROR=$($MYSQL_CMD -e "FLUSH PRIVILEGES;" 2>&1)
+    if [ $? -ne 0 ]; then
+        log_message "error" "Не удалось обновить привилегии: $MYSQL_ERROR"
+        exit 1
+    fi
+    
+    if [ "$DB_CREATED" = "1" ]; then
+        log_message "success" "База данных $MULTISITE_DB_NAME создана"
+    fi
+    log_message "success" "Пользователь $MULTISITE_DB_USER настроен"
+    
+    # Проверяем подключение к базе данных перед созданием wp-config.php
+    log_message "info" "Проверяем подключение к базе данных $MULTISITE_DB_NAME..."
+    DB_TEST_RESULT=$($MYSQL_CMD -e "USE $MULTISITE_DB_NAME; SELECT 1;" 2>&1)
+    if [ $? -ne 0 ]; then
+        log_message "error" "Не удалось подключиться к базе данных $MULTISITE_DB_NAME: $DB_TEST_RESULT"
+        exit 1
+    fi
+    log_message "success" "Подключение к базе данных успешно проверено"
     
     # Настраиваем wp-config.php для multisite, если WordPress ещё не установлен
     cd "$MULTISITE_ROOT"
     if [ ! -f "$MULTISITE_ROOT/wp-config.php" ]; then
         log_message "info" "Создаём wp-config.php для WordPress Multisite..."
-        sudo -u www-data wp config create --dbname="$MULTISITE_DB_NAME" --dbuser="$MULTISITE_DB_USER" --dbpass="$MULTISITE_DB_PASS" --dbhost=localhost --allow-root >/dev/null 2>&1
-        if [ $? -ne 0 ]; then
-            log_message "error" "wp-config.php не создан"
+        
+        # Проверяем, что директория существует и содержит файлы WordPress
+        if [ ! -d "$MULTISITE_ROOT" ]; then
+            log_message "error" "Директория $MULTISITE_ROOT не существует"
+            exit 1
+        fi
+        
+        if [ ! -f "$MULTISITE_ROOT/wp-load.php" ]; then
+            log_message "error" "WordPress файлы не найдены в $MULTISITE_ROOT. Убедитесь, что WordPress распакован."
+            exit 1
+        fi
+        
+        # Проверяем права доступа
+        chown -R www-data:www-data "$MULTISITE_ROOT"
+        chmod -R 755 "$MULTISITE_ROOT"
+        
+        # Сохраняем вывод ошибки во временный файл для диагностики
+        WP_CONFIG_ERROR=$(mktemp)
+        sudo -u www-data wp config create \
+            --dbname="$MULTISITE_DB_NAME" \
+            --dbuser="$MULTISITE_DB_USER" \
+            --dbpass="$MULTISITE_DB_PASS" \
+            --dbhost=localhost \
+            --allow-root \
+            --path="$MULTISITE_ROOT" \
+            2>"$WP_CONFIG_ERROR"
+        
+        WP_CONFIG_EXIT_CODE=$?
+        
+        if [ $WP_CONFIG_EXIT_CODE -ne 0 ]; then
+            ERROR_MSG=$(cat "$WP_CONFIG_ERROR" 2>/dev/null || echo "Неизвестная ошибка")
+            rm -f "$WP_CONFIG_ERROR"
+            log_message "error" "wp-config.php не создан. Ошибка: $ERROR_MSG"
+            log_message "error" "Проверьте подключение к базе данных: $MULTISITE_DB_NAME"
+            exit 1
+        fi
+        
+        rm -f "$WP_CONFIG_ERROR"
+        
+        # Проверяем, что файл действительно создан
+        if [ ! -f "$MULTISITE_ROOT/wp-config.php" ]; then
+            log_message "error" "wp-config.php не найден после создания"
             exit 1
         fi
         

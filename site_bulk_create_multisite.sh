@@ -240,12 +240,16 @@ bulk_create_sites_multisite() {
             exit 1
         fi
         
-        # Добавляем поддержку multisite перед комментарием "That's all"
-        sed -i "/\/\* That's all, stop editing/i\\
+        # Добавляем поддержку multisite перед комментарием "That's all" (только если еще не определена)
+        if ! grep -q "define.*WP_ALLOW_MULTISITE" "$MULTISITE_ROOT/wp-config.php" 2>/dev/null; then
+            sed -i "/\/\* That's all, stop editing/i\\
 define('WP_ALLOW_MULTISITE', true);" "$MULTISITE_ROOT/wp-config.php"
+        fi
         
-        # Добавляем поддержку HTTPS через прокси в начало файла
-        sed -i "1a if (isset(\$_SERVER['HTTP_X_FORWARDED_PROTO']) && \$_SERVER['HTTP_X_FORWARDED_PROTO'] === 'https') { \$_SERVER['HTTPS'] = 'on'; }" "$MULTISITE_ROOT/wp-config.php"
+        # Добавляем поддержку HTTPS через прокси в начало файла (только если еще не добавлено)
+        if ! grep -q "HTTP_X_FORWARDED_PROTO" "$MULTISITE_ROOT/wp-config.php" 2>/dev/null; then
+            sed -i "1a if (isset(\$_SERVER['HTTP_X_FORWARDED_PROTO']) && \$_SERVER['HTTP_X_FORWARDED_PROTO'] === 'https') { \$_SERVER['HTTPS'] = 'on'; }" "$MULTISITE_ROOT/wp-config.php"
+        fi
         
         log_message "success" "wp-config.php создан с поддержкой multisite"
     fi
@@ -284,6 +288,31 @@ define('WP_ALLOW_MULTISITE', true);" "$MULTISITE_ROOT/wp-config.php"
 define('SUNRISE', 'on');" "$MULTISITE_ROOT/wp-config.php"
                 log_message "success" "Константа SUNRISE добавлена в wp-config.php для domain mapping"
             fi
+        fi
+        
+        # Создаём файл sunrise.php для domain mapping
+        SUNRISE_FILE="$MULTISITE_ROOT/wp-content/sunrise.php"
+        if [ ! -f "$SUNRISE_FILE" ]; then
+            log_message "info" "Создаём файл sunrise.php для domain mapping..."
+            cat > "$SUNRISE_FILE" <<'SUNRISE_EOF'
+<?php
+/**
+ * WordPress Multisite Domain Mapping
+ * Этот файл позволяет WordPress Multisite работать с разными доменами
+ * 
+ * WordPress автоматически использует этот файл для определения сайта по домену
+ * когда константа SUNRISE установлена в 'on' в wp-config.php
+ */
+
+// Этот файл должен быть пустым или содержать минимальный код
+// WordPress Multisite сам обрабатывает domain mapping через таблицу wp_blogs
+// Просто наличие этого файла позволяет WordPress загрузить его без ошибок
+SUNRISE_EOF
+            chown www-data:www-data "$SUNRISE_FILE"
+            chmod 644 "$SUNRISE_FILE"
+            log_message "success" "Файл sunrise.php создан"
+        else
+            log_message "info" "Файл sunrise.php уже существует"
         fi
         
         # Обновляем domain главного сайта в базе данных
@@ -337,6 +366,29 @@ define('SUNRISE', 'on');" "$MULTISITE_ROOT/wp-config.php"
         if ! grep -q "define.*MULTISITE.*true" "$MULTISITE_ROOT/wp-config.php" 2>/dev/null; then
             log_message "warning" "Константа MULTISITE не найдена или не установлена в true"
         fi
+        
+        # Проверяем наличие файла sunrise.php
+        SUNRISE_FILE="$MULTISITE_ROOT/wp-content/sunrise.php"
+        if [ ! -f "$SUNRISE_FILE" ]; then
+            log_message "info" "Создаём файл sunrise.php для существующей установки..."
+            cat > "$SUNRISE_FILE" <<'SUNRISE_EOF'
+<?php
+/**
+ * WordPress Multisite Domain Mapping
+ * Этот файл позволяет WordPress Multisite работать с разными доменами
+ * 
+ * WordPress автоматически использует этот файл для определения сайта по домену
+ * когда константа SUNRISE установлена в 'on' в wp-config.php
+ */
+
+// Этот файл должен быть пустым или содержать минимальный код
+// WordPress Multisite сам обрабатывает domain mapping через таблицу wp_blogs
+// Просто наличие этого файла позволяет WordPress загрузить его без ошибок
+SUNRISE_EOF
+            chown www-data:www-data "$SUNRISE_FILE"
+            chmod 644 "$SUNRISE_FILE"
+            log_message "success" "Файл sunrise.php создан для существующей установки"
+        fi
     fi
     
     SUCCESS_COUNT=0
@@ -378,14 +430,16 @@ define('SUNRISE', 'on');" "$MULTISITE_ROOT/wp-config.php"
             site_slug=$(echo "$domain" | sed 's/[^a-zA-Z0-9]/-/g' | tr '[:upper:]' '[:lower:]' | sed 's/--*/-/g' | sed 's/^-\|-$//g')
             
             # Создаём сайт через wp-cli (без флага --domain, только --slug)
+            # Перенаправляем stderr в /dev/null чтобы убрать предупреждения PHP
             SITE_ID=$(sudo -u www-data wp site create \
                 --slug="$site_slug" \
                 --title="$original_domain" \
                 --email="admin@$original_domain" \
                 --porcelain \
-                --allow-root 2>&1)
+                --allow-root 2>/dev/null | grep -E '^[0-9]+$' | head -n 1)
             
-            if [ $? -eq 0 ] && [ -n "$SITE_ID" ] && [ "$SITE_ID" != "0" ]; then
+            # Проверяем, что SITE_ID - это число
+            if [ -n "$SITE_ID" ] && [ "$SITE_ID" -gt 0 ] 2>/dev/null; then
                 log_message "success" "Сайт $original_domain создан в WordPress Multisite (Site ID: $SITE_ID)"
                 
                 # Обновляем domain в таблице wp_blogs напрямую в базе данных
@@ -396,29 +450,24 @@ define('SUNRISE', 'on');" "$MULTISITE_ROOT/wp-config.php"
                 fi
                 
                 # Обновляем domain в таблице wp_blogs (это ключевой шаг для работы разных доменов)
-                $MYSQL_CMD -D "$MULTISITE_DB_NAME" -e "UPDATE wp_blogs SET domain='$domain' WHERE blog_id=$SITE_ID;" 2>/dev/null
+                MYSQL_UPDATE_RESULT=$($MYSQL_CMD -D "$MULTISITE_DB_NAME" -e "UPDATE wp_blogs SET domain='$domain' WHERE blog_id=$SITE_ID;" 2>&1)
                 
                 if [ $? -eq 0 ]; then
-                    log_message "success" "Domain обновлен в базе данных для сайта $original_domain"
+                    log_message "success" "Domain обновлен в базе данных для сайта $original_domain (blog_id=$SITE_ID)"
                 else
-                    log_message "warning" "Не удалось обновить domain в базе данных"
+                    log_message "warning" "Не удалось обновить domain в базе данных: $MYSQL_UPDATE_RESULT"
                 fi
                 
-                # Обновляем опции home и siteurl для нового сайта через --url
-                # Используем временный URL для обновления опций (по blog_id через slug)
-                TEMP_URL="http://$MAIN_DOMAIN/$site_slug/"
-                sudo -u www-data wp option update home "http://$domain" --url="$TEMP_URL" --allow-root >/dev/null 2>&1
-                sudo -u www-data wp option update siteurl "http://$domain" --url="$TEMP_URL" --allow-root >/dev/null 2>&1
-                
-                # Также обновляем через прямой SQL запрос в таблице опций для надежности
+                # Обновляем опции home и siteurl для нового сайта через прямой SQL запрос
+                # Это более надежно, чем через wp-cli, так как wp-cli может выдавать предупреждения
                 TABLE_PREFIX="wp_${SITE_ID}_"
                 $MYSQL_CMD -D "$MULTISITE_DB_NAME" -e "UPDATE ${TABLE_PREFIX}options SET option_value='http://$domain' WHERE option_name='home';" 2>/dev/null
                 $MYSQL_CMD -D "$MULTISITE_DB_NAME" -e "UPDATE ${TABLE_PREFIX}options SET option_value='http://$domain' WHERE option_name='siteurl';" 2>/dev/null
                 
-                # Обновляем domain также через прямой домен (для domain mapping)
-                # Это позволяет WordPress правильно определить сайт по домену
-                sudo -u www-data wp option update home "http://$domain" --url="http://$domain" --allow-root >/dev/null 2>&1 || true
-                sudo -u www-data wp option update siteurl "http://$domain" --url="http://$domain" --allow-root >/dev/null 2>&1 || true
+                # Также пробуем обновить через wp-cli (перенаправляем stderr чтобы убрать предупреждения)
+                TEMP_URL="http://$MAIN_DOMAIN/$site_slug/"
+                sudo -u www-data wp option update home "http://$domain" --url="$TEMP_URL" --allow-root 2>/dev/null || true
+                sudo -u www-data wp option update siteurl "http://$domain" --url="$TEMP_URL" --allow-root 2>/dev/null || true
                 
                 log_message "success" "Настройки домена $original_domain обновлены (Site ID: $SITE_ID)"
             else
@@ -430,11 +479,7 @@ define('SUNRISE', 'on');" "$MULTISITE_ROOT/wp-config.php"
             # Для главного домена обновляем опции и базу данных
             log_message "info" "Обновляем настройки главного домена $original_domain..."
             
-            # Обновляем через wp-cli
-            sudo -u www-data wp option update home "http://$domain" --url="http://$domain" --allow-root >/dev/null 2>&1
-            sudo -u www-data wp option update siteurl "http://$domain" --url="http://$domain" --allow-root >/dev/null 2>&1
-            
-            # Также обновляем через прямой SQL запрос для надежности
+            # Обновляем через прямой SQL запрос (более надежно)
             if [ -n "$MYSQL_CONFIG_FILE" ] && [ -f "$MYSQL_CONFIG_FILE" ]; then
                 MYSQL_CMD="mysql --defaults-file=$MYSQL_CONFIG_FILE -u root"
             else
@@ -442,7 +487,11 @@ define('SUNRISE', 'on');" "$MULTISITE_ROOT/wp-config.php"
             fi
             $MYSQL_CMD -D "$MULTISITE_DB_NAME" -e "UPDATE wp_options SET option_value='http://$domain' WHERE option_name IN ('home', 'siteurl');" 2>/dev/null
             $MYSQL_CMD -D "$MULTISITE_DB_NAME" -e "UPDATE wp_blogs SET domain='$domain' WHERE blog_id=1;" 2>/dev/null
-            $MYSQL_CMD -D "$MULTISITE_DB_NAME" -e "UPDATE wp_site SET domain='$domain' WHERE id=1;" 2>/dev/null
+            $MYSQL_CMD -D "$MULTISITE_DB_NAME" -e "UPDATE wp_site SET domain='$domain' WHERE id=1;" 2>/dev/null || true
+            
+            # Также пробуем обновить через wp-cli (перенаправляем stderr чтобы убрать предупреждения)
+            sudo -u www-data wp option update home "http://$domain" --url="http://$domain" --allow-root 2>/dev/null || true
+            sudo -u www-data wp option update siteurl "http://$domain" --url="http://$domain" --allow-root 2>/dev/null || true
         fi
         
         # Настраиваем SSL, если требуется
